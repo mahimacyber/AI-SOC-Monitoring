@@ -1,0 +1,1292 @@
+import "./App.css";
+import { useState, useEffect } from "react";
+
+import {
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid
+} from "recharts";
+
+function App() {
+  
+const [alerts, setAlerts] = useState(() => {
+  try {
+    const cached = JSON.parse(
+      sessionStorage.getItem("soc-alerts-cache") || "[]"
+    );
+    return Array.isArray(cached) ? cached : [];
+  } catch {
+    return [];
+  }
+});
+
+  const [search, setSearch] = useState("");
+  const [selectedAlert, setSelectedAlert] = useState(null);
+  
+useEffect(() => {
+  if (!selectedAlert) return;
+
+  const handleEsc = (event) => {
+    if (event.key === "Escape") {
+      setSelectedAlert(null);
+    }
+  };
+
+  window.addEventListener("keydown", handleEsc);
+
+  return () => {
+    window.removeEventListener("keydown", handleEsc);
+  };
+}, [selectedAlert]);
+
+  const [severityFilter, setSeverityFilter] = useState("ALL");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+const [backendConnected, setBackendConnected] = useState(null);
+
+const [lastUpdated, setLastUpdated] = useState(() => {
+  const savedTime = sessionStorage.getItem("soc-last-updated");
+
+  if (savedTime && !Number.isNaN(new Date(savedTime).getTime())) {
+    return new Date(savedTime);
+  }
+
+  return null;
+});
+
+
+const [mlForm, setMlForm] = useState({
+  failed_logins: "25",
+  successful_logins: "0",
+  unique_users: "8",
+  username: "admin",
+  source_ip: "192.0.2.10"
+});
+
+const [mlResult, setMlResult] = useState(null);
+const [mlLoading, setMlLoading] = useState(false);
+
+
+useEffect(() => {
+    
+
+fetch("http://127.0.0.1:8000/alerts", {
+  headers: {
+    Authorization: `Bearer ${sessionStorage.getItem("soc_access_token")}`
+  }
+})
+
+
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("API request failed");
+        }
+        return response.json();
+      })
+      .then((data) => {
+        setAlerts(data);
+        sessionStorage.setItem("soc-alerts-cache", JSON.stringify(data));
+        setBackendConnected(true);
+        setLastUpdated(new Date());
+        sessionStorage.setItem("soc-last-updated", new Date().toISOString());
+        setLoading(false);
+      })
+      .catch(() => {
+        setBackendConnected(false);
+        setError("Cannot connect to FastAPI backend");
+        setLoading(false);
+      });
+      
+    const intervalId = setInterval(() => {
+      fetch("http://127.0.0.1:8000/alerts")
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error("Auto refresh failed");
+          }
+          return response.json();
+        })
+        .then((data) => {
+          setAlerts(data);
+          sessionStorage.setItem("soc-alerts-cache", JSON.stringify(data));
+          setBackendConnected(true);
+          setLastUpdated(new Date());
+          sessionStorage.setItem("soc-last-updated", new Date().toISOString());
+          setError("");
+        })
+        .catch((error) => {
+       setBackendConnected(false);
+          console.error("Auto refresh failed:", error);
+        });
+    }, 10000);
+
+    return () => clearInterval(intervalId);
+
+  }, []);
+
+  const highAlerts = alerts.filter(
+    (alert) => alert.severity === "HIGH"
+  ).length;
+  
+  
+const newAlerts = alerts.filter(
+  (alert) => alert.status === "New"
+).length;
+
+const investigatingAlerts = alerts.filter(
+  (alert) => alert.status === "Investigating"
+).length;
+
+const resolvedAlerts = alerts.filter(
+  (alert) => alert.status === "Resolved"
+).length;
+
+const severityData = ["HIGH", "MEDIUM", "LOW"].map((severity) => ({
+  name: severity,
+  value: alerts.filter(
+    (alert) => alert.severity === severity
+  ).length
+}));
+
+const statusData = ["New", "Investigating", "Resolved"].map((status) => ({
+  name: status,
+  count: alerts.filter(
+    (alert) => alert.status === status
+  ).length
+}));
+
+const filteredAlerts = alerts.filter((alert) => {
+  const matchesSearch =
+    `${alert.alert_type} ${alert.username} ${alert.source_ip}`
+      .toLowerCase()
+      .includes(search.toLowerCase());
+
+  const matchesSeverity =
+    severityFilter === "ALL" ||
+    alert.severity === severityFilter;
+
+const matchesStatus =
+  statusFilter === "ALL" ||
+  alert.status === statusFilter;
+
+  
+return matchesSearch && matchesSeverity && matchesStatus;
+
+});
+
+
+async function updateAlertStatus(alertId, newStatus) {
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:8000/alerts/${alertId}/status`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ status: newStatus })
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error("Status update failed");
+    }
+
+    setAlerts((previousAlerts) =>
+      previousAlerts.map((alert) =>
+        alert.id === alertId
+          ? { ...alert, status: newStatus }
+          : alert
+      )
+    );
+
+  } catch (error) {
+    window.alert("Could not update alert status");
+  }
+}
+
+async function analyzeThreat() {
+  setMlLoading(true);
+  setMlResult(null);
+
+  try {
+    const response = await fetch(
+      "http://127.0.0.1:8000/predict-and-save",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          failed_logins: Number(mlForm.failed_logins),
+          successful_logins: Number(mlForm.successful_logins),
+          unique_users: Number(mlForm.unique_users),
+          username: mlForm.username,
+          source_ip: mlForm.source_ip
+        })
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error("Prediction failed");
+    }
+
+    const result = await response.json();
+    setMlResult(result);
+
+    if (result.saved) {
+      const alertsResponse = await fetch(
+        "http://127.0.0.1:8000/alerts"
+      );
+
+      if (alertsResponse.ok) {
+        const updatedAlerts = await alertsResponse.json();
+        setAlerts(updatedAlerts);
+      }
+    }
+
+  } catch (error) {
+    setMlResult({
+      error: "Could not analyze threat. Check FastAPI."
+    });
+  } finally {
+    setMlLoading(false);
+  }
+}
+
+function downloadAlertsCSV() {
+  const headers = [
+    "ID",
+    "Alert Type",
+    "Severity",
+    "Username",
+    "Source IP",
+    "Timestamp",
+    "Status"
+  ];
+
+  const rows = alerts.map((alert) => [
+    alert.id,
+    alert.alert_type,
+    alert.severity,
+    alert.username,
+    alert.source_ip,
+    alert.timestamp,
+    alert.status
+  ]);
+
+  const escapeCSV = (value) => {
+    let text = String(value ?? "");
+
+    if (/^[\s]*[=+\-@]/.test(text)) {
+      text = "'" + text;
+    }
+
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+
+  const csv = [headers, ...rows]
+    .map((row) => row.map(escapeCSV).join(","))
+    .join("\r\n");
+
+  const blob = new Blob([csv], {
+    type: "text/csv;charset=utf-8;"
+  });
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = "SOC_Security_Alerts.csv";
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
+
+  return (
+    <main id="overview" className="dashboard" style={{
+      color: "white",
+      minHeight: "100vh",
+      width: "100vw",
+      padding: "35px",
+      boxSizing: "border-box",
+      textAlign: "left"
+    }}>
+
+<nav style={{
+  display: "flex",
+  position: "sticky",
+top: "10px",
+zIndex: 1000,
+  justifyContent: "space-between",
+  alignItems: "center",
+  flexWrap: "wrap",
+  gap: "15px",
+  background: "rgba(15, 23, 42, 0.95)",
+  border: "1px solid rgba(34, 211, 238, 0.35)",
+  borderRadius: "14px",
+  padding: "15px 20px",
+  marginBottom: "30px",
+  boxShadow: "0 0 20px rgba(34, 211, 238, 0.12)"
+}}>
+  <span style={{
+    color: "#22d3ee",
+    fontSize: "18px",
+    fontWeight: "bold",
+    marginRight: "auto"
+  }}>
+    🛡️ SOC COMMAND CENTER
+  </span>
+
+  <a
+  
+onMouseEnter={(e) => {
+  e.currentTarget.style.background = "#0891b2";
+  e.currentTarget.style.boxShadow = "0 0 16px rgba(34, 211, 238, 0.5)";
+}}
+onMouseLeave={(e) => {
+  e.currentTarget.style.background = "#155e75";
+  e.currentTarget.style.boxShadow = "none";
+}}
+
+   href="#overview" style={{
+    color: "white",
+    background: "#155e75",
+    padding: "10px 16px",
+    borderRadius: "8px",
+    textDecoration: "none"
+  }}>
+    Overview
+  </a>
+  
+<a
+
+onMouseEnter={(e) => {
+  e.currentTarget.style.background = "#0891b2";
+  e.currentTarget.style.boxShadow = "0 0 16px rgba(34, 211, 238, 0.5)";
+}}
+onMouseLeave={(e) => {
+  e.currentTarget.style.background = "#1e293b";
+  e.currentTarget.style.boxShadow = "none";
+}}
+
+  href="#threat-detection"
+  style={{
+    color: "#e2e8f0",
+    background: "#1e293b",
+    border: "1px solid #334155",
+    padding: "10px 16px",
+    borderRadius: "8px",
+    textDecoration: "none"
+  }}
+>
+  🛡️ Threat Detection
+</a>
+
+<a
+
+onMouseEnter={(e) => {
+  e.currentTarget.style.background = "#0891b2";
+  e.currentTarget.style.boxShadow = "0 0 16px rgba(34, 211, 238, 0.5)";
+}}
+onMouseLeave={(e) => {
+  e.currentTarget.style.background = "#1e293b";
+  e.currentTarget.style.boxShadow = "none";
+}}
+
+  href="#security-alerts"
+  style={{
+    color: "#e2e8f0",
+    background: "#1e293b",
+    border: "1px solid #334155",
+    padding: "10px 16px",
+    borderRadius: "8px",
+    textDecoration: "none"
+  }}
+>
+  🚨 Security Alerts
+</a>
+
+<a
+
+onMouseEnter={(e) => {
+  e.currentTarget.style.background = "#0891b2";
+  e.currentTarget.style.boxShadow = "0 0 16px rgba(34, 211, 238, 0.5)";
+}}
+onMouseLeave={(e) => {
+  e.currentTarget.style.background = "#1e293b";
+  e.currentTarget.style.boxShadow = "none";
+}}
+
+  href="#reports"
+  style={{
+    color: "#e2e8f0",
+    background: "#1e293b",
+    border: "1px solid #334155",
+    padding: "10px 16px",
+    borderRadius: "8px",
+    textDecoration: "none"
+  }}
+>
+  📊 Reports
+</a>
+
+<button
+  type="button"
+  onClick={() => {
+    sessionStorage.removeItem("soc_access_token");
+    window.location.replace("/login");
+  }}
+  style={{
+    background: "linear-gradient(135deg, #991b1b, #e11d48)",
+    color: "#ffffff",
+    border: "1px solid #fb7185",
+    padding: "10px 18px",
+    borderRadius: "8px",
+    fontWeight: "bold",
+    cursor: "pointer",
+    fontSize: "14px"
+  }}
+>
+  🚪 Logout
+</button>
+
+</nav>
+
+      <h1
+  style={{
+    fontSize: "clamp(26px, 3vw, 38px)",
+    fontWeight: "800",
+    letterSpacing: "0.5px",
+    color: "#e2f4ff",
+    textShadow: "0 0 20px rgba(34, 211, 238, 0.40)",
+    marginBottom: "10px"
+  }}
+>
+  🛡️ AI SOC Monitoring Dashboard
+</h1>
+
+      <p>Live Security Alert Monitoring</p>
+
+
+<p
+  style={{
+    color:
+      backendConnected === null
+        ? "#facc15"
+        : backendConnected
+        ? "#4ade80"
+        : "#f87171",
+    fontWeight: "bold",
+    fontSize: "16px",
+    marginTop: "12px"
+  }}
+>
+  {backendConnected === null
+    ? "🟡 Checking Backend Connection..."
+    : backendConnected
+    ? "🟢 Backend Connected - Live Monitoring Active"
+    : "🔴 Backend Disconnected - Monitoring Unavailable"}
+</p>
+
+{backendConnected === false && alerts.length > 0 && (
+  <p style={{ color: "#facc15", fontWeight: "bold" }}>
+    ⚠️ Showing Saved Alerts - Data Is Not Live
+  </p>
+)}
+
+{lastUpdated && (
+  <p style={{
+    color: "#94a3b8",
+    fontSize: "14px",
+    marginTop: "8px"
+  }}>
+    🕒 Last Updated: {lastUpdated.toLocaleTimeString()}
+  </p>
+)}
+
+
+     
+<div style={{
+  display: "flex",
+  flexWrap: "wrap",
+  gap: "20px",
+  marginTop: "30px",
+  alignItems: "stretch",
+  width: "100%"
+}}>
+
+       
+<div style={{
+  background: "linear-gradient(145deg, #13253d, #0c1830)",
+  padding: "25px",
+  borderRadius: "16px",
+  border: "1px solid rgba(34, 211, 238, 0.45)",
+  boxShadow: "0 0 22px rgba(34, 211, 238, 0.17)",
+  minWidth: "210px",
+flex: "0 1 280px"
+
+}}>
+
+          <h3>Total Alerts</h3>
+          <h1>{alerts.length}</h1>
+        </div>
+
+        
+<div style={{
+  background: "linear-gradient(145deg, #301827, #170f24)",
+  padding: "25px",
+  borderRadius: "16px",
+  border: "1px solid rgba(248, 113, 113, 0.55)",
+  boxShadow: "0 0 22px rgba(248, 113, 113, 0.20)",
+  minWidth: "210px"
+}}>
+
+          <h3>High Severity</h3>
+          <h1 style={{ color: "#f87171" }}>
+            {highAlerts}
+          </h1>
+        </div>
+      </div>
+
+
+<div style={{
+  display: "flex",
+  flexWrap: "wrap",
+  gap: "20px",
+  marginTop: "20px"
+}}>
+ 
+<div style={{
+  background: "linear-gradient(145deg, #103739, #0b1f2c)",
+  padding: "25px",
+  borderRadius: "16px",
+  border: "1px solid rgba(45, 212, 191, 0.55)",
+  boxShadow: "0 0 22px rgba(45, 212, 191, 0.20)",
+  flex: "1 1 180px"
+}}>
+
+    <h3>New Alerts</h3>
+    <h1 style={{ color: "#38bdf8" }}>
+      {newAlerts}
+    </h1>
+  </div>
+
+ 
+<div style={{
+  background: "linear-gradient(145deg, #302517, #1c1924)",
+  padding: "25px",
+  borderRadius: "16px",
+  border: "1px solid rgba(251, 191, 36, 0.55)",
+  boxShadow: "0 0 22px rgba(251, 191, 36, 0.20)",
+  flex: "1 1 180px"
+}}>
+
+    <h3>Investigating</h3>
+    <h1 style={{ color: "#facc15" }}>
+      {investigatingAlerts}
+    </h1>
+  </div>
+
+  
+<div style={{
+  background: "linear-gradient(145deg, #10372e, #0b2024)",
+  padding: "25px",
+  borderRadius: "16px",
+  border: "1px solid rgba(74, 222, 128, 0.55)",
+  boxShadow: "0 0 22px rgba(74, 222, 128, 0.20)",
+  flex: "1 1 180px"
+}}>
+
+    <h3>Resolved</h3>
+    <h1 style={{ color: "#4ade80" }}>
+      {resolvedAlerts}
+    </h1>
+  </div>
+</div>
+
+<div style={{
+  background: "linear-gradient(145deg, #12263d, #0b172a)",
+  padding: "22px",
+  borderRadius: "16px",
+  border: "1px solid rgba(34, 211, 238, 0.5)",
+  boxShadow: "0 0 20px rgba(34, 211, 238, 0.15)",
+  marginTop: "25px"
+}}>
+  <h2>🚨 Live Threat Activity</h2>
+
+  <p style={{
+    color: backendConnected ? "#4ade80" : "#facc15"
+  }}>
+    {backendConnected
+      ? "🟢 Auto Refresh Active - Every 10 Seconds"
+      : "🟡 Showing Saved Alerts - Not Live"}
+  </p>
+
+  {[...alerts]
+    .sort((a, b) => Number(b.id) - Number(a.id))
+    .slice(0, 5)
+    .map((alert) => (
+      <div
+        key={alert.id}
+     onClick={() => setSelectedAlert(alert)}
+        style={{
+        cursor: "pointer",
+          display: "flex",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "12px",
+          padding: "14px",
+          marginTop: "10px",
+          background: "#1e293b",
+          borderRadius: "8px",
+          borderLeft: alert.severity?.toUpperCase() === "HIGH"
+            ? "4px solid #ef4444"
+            : "4px solid #facc15"
+        }}
+      >
+       
+<span>
+  #{alert.id} - {alert.alert_type}
+
+  <small style={{
+    display: "block",
+    color: "#94a3b8",
+    marginTop: "6px",
+    fontSize: "12px"
+  }}>
+    🕒 {alert.timestamp || "Time unavailable"}
+  </small>
+</span>
+
+
+        <strong style={{
+          color: alert.severity?.toUpperCase() === "HIGH"
+            ? "#f87171"
+            : "#facc15"
+        }}>
+          {alert.severity}
+        </strong>
+      </div>
+    ))}
+
+  {alerts.length === 0 && (
+    <p>No security alerts available.</p>
+  )}
+</div>
+
+<div style={{
+  
+background: "linear-gradient(145deg, #13253d, #0b172a)",
+  padding: "20px",
+  borderRadius: "12px",
+border: "1px solid rgba(34, 211, 238, 0.45)",
+boxShadow: "0 0 20px rgba(34, 211, 238, 0.15)",
+  marginTop: "30px",
+  width: "45%",
+  minWidth: "320px",
+  display: "inline-block",
+  verticalAlign: "top",
+  marginRight: "20px",
+  boxSizing: "border-box"
+}}>
+
+  <h2>Severity Distribution</h2>
+
+  <div style={{ width: "100%", height: "300px" }}>
+    <ResponsiveContainer width="100%" height="100%">
+      <PieChart>
+        <Pie
+          data={severityData.filter(item => item.value > 0)}
+          dataKey="value"
+          nameKey="name"
+          cx="50%"
+          cy="50%"
+       innerRadius={62}
+outerRadius={100}
+paddingAngle={4}
+cornerRadius={6}
+          label
+        >
+          {severityData
+            .filter(item => item.value > 0)
+            .map(entry => (
+              <Cell
+                key={entry.name}
+                fill={
+                  entry.name === "HIGH" ? "#ef4444" :
+                  entry.name === "MEDIUM" ? "#f59e0b" :
+                  "#22c55e"
+                }
+              />
+            ))}
+        </Pie>
+        <text
+  x="50%"
+  y="50%"
+  textAnchor="middle"
+  dominantBaseline="middle"
+  fill="#e2e8f0"
+  fontSize="30"
+  fontWeight="800"
+  pointerEvents="none"
+>
+  {alerts.length}
+</text>
+        
+<Tooltip
+  contentStyle={{
+    backgroundColor: "#0f172a",
+    border: "1px solid #22d3ee",
+    borderRadius: "10px",
+    boxShadow: "0 0 16px rgba(34, 211, 238, 0.25)"
+  }}
+  itemStyle={{ color: "#e2e8f0" }}
+  labelStyle={{ color: "#94a3b8" }}
+/>
+
+        <Legend />
+      </PieChart>
+    </ResponsiveContainer>
+  </div>
+</div>
+
+<div style={{
+  
+background: "linear-gradient(145deg, #211a40, #0b172a)",
+  padding: "20px",
+  borderRadius: "12px",
+  border: "1px solid rgba(167, 139, 250, 0.55)",
+boxShadow: "0 0 20px rgba(139, 92, 246, 0.20)",
+  marginTop: "30px",
+  maxWidth: "500px",
+  display: "inline-block",
+  verticalAlign: "top",
+  width: "45%",
+  minWidth: "320px",
+  marginRight: "20px"
+}}>
+
+  <h2>Alert Status Distribution</h2>
+
+  <div style={{ width: "100%", height: "300px" }}>
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart data={statusData}>
+        
+<CartesianGrid
+  stroke="#334155"
+  strokeDasharray="4 4"
+  vertical={false}
+  opacity={0.45}
+/>
+
+        
+<XAxis
+  dataKey="name"
+  tick={{ fill: "#cbd5e1", fontSize: 12 }}
+  axisLine={false}
+  tickLine={false}
+  tickMargin={12}
+/>
+
+        
+<YAxis
+  allowDecimals={false}
+  tick={{ fill: "#94a3b8", fontSize: 12 }}
+  axisLine={false}
+  tickLine={false}
+/>
+
+       
+<Tooltip
+  contentStyle={{
+    backgroundColor: "#0f172a",
+    border: "1px solid #8b5cf6",
+    borderRadius: "12px",
+    boxShadow: "0 0 18px rgba(139, 92, 246, 0.3)",
+    color: "#e2e8f0"
+  }}
+  labelStyle={{
+    color: "#c4b5fd",
+    fontWeight: "bold"
+  }}
+  itemStyle={{
+    color: "#67e8f9"
+  }}
+  cursor={{
+    fill: "rgba(139, 92, 246, 0.08)"
+  }}
+/>
+
+        
+<Bar
+  dataKey="count"
+  fill="#22d3ee"
+  radius={[10, 10, 0, 0]}
+  maxBarSize={58}
+/>
+
+      </BarChart>
+    </ResponsiveContainer>
+  </div>
+</div>
+
+
+<div id="threat-detection" style={{
+  background: "linear-gradient(135deg, #132b46, #0a1527)",
+  padding: "20px",
+  borderRadius: "20px",
+  marginTop: "30px",
+  
+marginBottom: "25px",
+border: "1px solid rgba(34, 211, 238, 0.35)",
+boxShadow: "0 14px 36px rgba(0, 0, 0, 0.35), 0 0 24px rgba(34, 211, 238, 0.12)"
+}}>
+
+  <h2>AI Threat Detection</h2>
+  <p>Analyze Login Activity using Machine Learning</p>
+
+  <form onSubmit={(e) => {
+    e.preventDefault();
+    analyzeThreat();
+  }}>
+    
+<div className="ml-form">
+
+      {[
+        { key: "failed_logins", label: "Failed Logins", type: "number" },
+        { key: "successful_logins", label: "Successful Logins", type: "number" },
+        { key: "unique_users", label: "Unique Users", type: "number" },
+        { key: "username", label: "Username", type: "text" },
+        { key: "source_ip", label: "Source IP", type: "text" }
+      ].map((field) => (
+        <label
+          key={field.key}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "6px"
+          }}
+        >
+          {field.label}
+
+          <input
+            type={field.type}
+            min={field.type === "number" ? 0 : undefined}
+            required
+            value={mlForm[field.key]}
+            onChange={(e) =>
+              setMlForm((previous) => ({
+                ...previous,
+                [field.key]: e.target.value
+              }))
+            }
+            style={{
+              padding: "10px",
+              background: "#0f172a",
+              color: "white",
+              border: "1px solid #475569",
+              borderRadius: "8px"
+            }}
+          />
+        </label>
+      ))}
+    </div>
+
+    <button
+      type="submit"
+      disabled={mlLoading}
+     
+className="primary-btn"
+style={{
+  marginTop: "20px",
+  padding: "14px 28px",
+  fontSize: "16px",
+  minHeight: "50px"
+}}
+
+    >
+      {mlLoading ? "Analyzing..." : "Analyze Threat"}
+    </button>
+  </form>
+
+  {mlResult && (
+    
+<div
+  className="result-box"
+  style={{
+    marginTop: "20px",
+    padding: "24px",
+    borderRadius: "16px",
+    background: mlResult.error
+      ? "linear-gradient(135deg, #38221e, #181827)"
+      : mlResult.prediction === "SUSPICIOUS"
+      ? "linear-gradient(135deg, #3b1828, #1b1627)"
+      : "linear-gradient(135deg, #103b32, #102326)",
+    border: mlResult.error
+      ? "1px solid #f59e0b"
+      : mlResult.prediction === "SUSPICIOUS"
+      ? "1px solid #ef4444"
+      : "1px solid #22c55e",
+    boxShadow: mlResult.prediction === "SUSPICIOUS"
+      ? "0 0 25px rgba(239, 68, 68, 0.20)"
+      : "0 0 25px rgba(34, 197, 94, 0.15)"
+  }}
+>
+
+      {mlResult.error ? (
+        <p style={{ color: "#f87171" }}>
+          {mlResult.error}
+        </p>
+      ) : (
+        <>
+         
+<h3 style={{
+  color: mlResult.prediction === "SUSPICIOUS"
+    ? "#f87171"
+    : "#4ade80",
+  fontSize: "21px",
+  marginBottom: "12px"
+}}>
+  {mlResult.prediction === "SUSPICIOUS"
+    ? "🚨 SUSPICIOUS ACTIVITY DETECTED"
+    : "✅ NORMAL ACTIVITY"}
+</h3>
+
+<p style={{ color: "#cbd5e1" }}>
+  ML Prediction: {mlResult.prediction}
+</p>
+
+          
+<p>
+  {mlResult.duplicate
+    ? `Duplicate Alert Prevented! Existing Alert ID: ${mlResult.alert_id}`
+    : mlResult.saved
+      ? `Alert saved! ID: ${mlResult.alert_id}`
+      : "Normal activity - No alert saved"}
+</p>
+
+        </>
+      )}
+    </div>
+  )}
+</div>
+
+      
+<h2 id="security-alerts" style={{ marginTop: "35px" }}>
+        Recent Security Alerts
+      </h2>
+
+
+<button id="reports"
+  type="button"
+  onClick={downloadAlertsCSV}
+  disabled={alerts.length === 0}
+  style={{
+    background: "#0284c7",
+    color: "white",
+    padding: "12px 20px",
+    border: "none",
+    borderRadius: "8px",
+    cursor: "pointer",
+    marginBottom: "20px"
+  }}
+>
+  Download CSV Report
+</button>
+
+      <input
+      className="soc-alert-search"
+  type="text"
+  placeholder="Search by IP, username or attack..."
+  value={search}
+  onChange={(e) => setSearch(e.target.value)}
+  style={{
+    padding: "12px",
+    width: "320px",
+    maxWidth: "100%",
+    marginBottom: "20px",
+    borderRadius: "8px",
+    background: "#1e293b",
+    color: "white",
+    border: "1px solid #475569"
+  }}
+/>
+
+<select
+  value={severityFilter}
+  onChange={(e) => setSeverityFilter(e.target.value)}
+  style={{
+    padding: "12px",
+    marginLeft: "15px",
+    borderRadius: "8px",
+    background: "#1e293b",
+    color: "white",
+    border: "1px solid #475569"
+  }}
+>
+  <option value="ALL">All Severities</option>
+  <option value="HIGH">High</option>
+  <option value="MEDIUM">Medium</option>
+  <option value="LOW">Low</option>
+</select>
+
+<select
+
+className="soc-filter-select"
+  value={statusFilter}
+  onChange={(e) => setStatusFilter(e.target.value)}
+  style={{
+    padding: "12px",
+    marginLeft: "12px",
+    background: "#1e293b",
+    color: "white",
+    border: "1px solid #475569",
+    borderRadius: "8px"
+  }}
+>
+  <option value="ALL">All Statuses</option>
+  <option value="New">New</option>
+  <option value="Investigating">Investigating</option>
+  <option value="Resolved">Resolved</option>
+</select>
+
+<button
+className="soc-clear-btn"
+  type="button"
+  onClick={() => {
+    setSearch("");
+    setSeverityFilter("ALL");
+    setStatusFilter("ALL");
+  }}
+  style={{
+    padding: "12px 20px",
+    marginLeft: "12px",
+    background: "#dc2626",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    cursor: "pointer"
+  }}
+>
+  Clear Filters
+</button>
+
+      {loading && <p>Loading alerts...</p>}
+      {error && <p style={{ color: "red" }}>{error}</p>}
+
+      {!loading && !error && alerts.length === 0 && (
+        <p>No security alerts found.</p>
+      )}
+
+      <div style={{ overflowX: "auto" }}>
+        <table className="alert-table" style={{
+          width: "100%",
+          borderCollapse: "collapse"
+        }}>
+          <thead>
+            <tr>
+              {["ID", "Alert Type", "Severity",
+                "Username", "Source IP", "Status", "Actions"].map(
+                (item) => (
+                  <th key={item} style={{
+                    padding: "14px",
+                    background: "#334155",
+                    textAlign: "left"
+                  }}>
+                    {item}
+                  </th>
+                )
+              )}
+            </tr>
+          </thead>
+
+          
+<tbody>
+  
+{!loading && !error && alerts.length > 0 && filteredAlerts.length === 0 && (
+  <tr>
+    <td
+      colSpan={6}
+      style={{
+        textAlign: "center",
+        padding: "25px",
+        color: "#94a3b8"
+      }}
+    >
+      No matching security alerts found.
+    </td>
+  </tr>
+)}
+
+ 
+{[...filteredAlerts]
+  .sort((a, b) => {
+    const priority = { HIGH: 3, MEDIUM: 2, LOW: 1 };
+
+    return (
+      (priority[b.severity?.toUpperCase()] ?? 0) -
+      (priority[a.severity?.toUpperCase()] ?? 0)
+    );
+  })
+  .map((alert) => (
+
+    
+<tr
+  key={alert.id}
+  style={{
+    backgroundColor:
+      alert.severity?.toUpperCase() === "HIGH"
+        ? "rgba(239, 68, 68, 0.25)"
+        : "transparent"
+  }}
+>
+
+      {[
+        alert.id,
+        alert.alert_type,
+        alert.severity,
+        alert.username,
+        alert.source_ip
+      ].map((value, index) => (
+        <td
+          key={index}
+          style={{
+            padding: "14px",
+            borderBottom: "1px solid #334155"
+          }}
+        >
+          
+{index === 2 ? (
+  <span className={`badge badge-${String(value).toLowerCase()}`}>
+    ● {value}
+  </span>
+) : (
+  value
+)}
+
+        </td>
+      ))}
+
+      <td style={{ padding: "14px" }}>
+        <select
+      className={`soc-status-select status-${String(alert.status).toLowerCase()}`}
+          value={alert.status}
+          onChange={(e) =>
+            updateAlertStatus(alert.id, e.target.value)
+          }
+          style={{
+            padding: "10px",
+            background: "#1e293b",
+            color: "white",
+            borderRadius: "8px",
+            border: "1px solid #475569"
+          }}
+        >
+          <option value="New">New</option>
+          <option value="Investigating">Investigating</option>
+          <option value="Resolved">Resolved</option>
+        </select>
+      </td>
+      
+<td style={{ padding: "10px" }}>
+  <button
+    type="button"
+    onClick={() => setSelectedAlert(alert)}
+    onMouseEnter={(e) => {
+  e.currentTarget.style.background = "#263852";
+  e.currentTarget.style.boxShadow = "0 0 15px rgba(34, 211, 238, 0.25)";
+}}
+onMouseLeave={(e) => {
+  e.currentTarget.style.background = "#1e293b";
+  e.currentTarget.style.boxShadow = "none";
+}}
+    style={{
+      background: "#2563eb",
+      color: "white",
+      border: "none",
+      padding: "8px 12px",
+      borderRadius: "6px",
+      cursor: "pointer"
+    }}
+  >
+    View Details
+  </button>
+  className="soc-view-btn"
+</td>
+
+    </tr>
+  ))}
+</tbody>
+
+        </table>
+        
+{selectedAlert && (
+  <div
+    style={{
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0, 0, 0, 0.75)",
+      display: "flex",
+      justifyContent: "center",
+      alignItems: "center",
+      zIndex: 9999
+    }}
+    onClick={(e) => {
+  if (e.target === e.currentTarget) {
+    setSelectedAlert(null);
+  }
+}}
+  >
+    <div
+      style={{
+        background: "#1e293b",
+        color: "white",
+        padding: "30px",
+        borderRadius: "12px",
+        width: "90%",
+        maxWidth: "450px"
+      }}
+    >
+      <h2>Security Alert Details</h2>
+
+      <p><b>Alert ID:</b> {selectedAlert.id}</p>
+      <p><b>Attack Type:</b> {selectedAlert.alert_type}</p>
+      <p><b>Severity:</b> {selectedAlert.severity}</p>
+      <p><b>Status:</b> {selectedAlert.status}</p>
+      <p><b>Username:</b> {selectedAlert.username}</p>
+      <p><b>Source IP:</b> {selectedAlert.source_ip}</p>
+      <p><b>Timestamp:</b> {selectedAlert.timestamp || "N/A"}</p>
+
+      <button
+        onClick={() => setSelectedAlert(null)}
+        style={{
+          background: "#ef4444",
+          color: "white",
+          border: "none",
+          padding: "10px 20px",
+          borderRadius: "6px",
+          cursor: "pointer"
+        }}
+      >
+        Close
+      </button>
+    </div>
+  </div>
+)}
+
+      </div>
+    </main>
+  );
+}
+
+export default App;

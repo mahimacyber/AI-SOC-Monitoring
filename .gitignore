@@ -1,0 +1,23 @@
+
+# Secret keys
+.env
+.env.*
+!.env.example
+
+# Python environment
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# React / Node.js
+node_modules/
+dist/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
