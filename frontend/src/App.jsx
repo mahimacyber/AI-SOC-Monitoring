@@ -365,7 +365,7 @@ onMouseLeave={(e) => {
   e.currentTarget.style.boxShadow = "none";
 }}
 
-   href="#overview" style={{
+   href="/dashboard" style={{
     color: "white",
     background: "#155e75",
     padding: "10px 16px",
@@ -386,7 +386,7 @@ onMouseLeave={(e) => {
   e.currentTarget.style.boxShadow = "none";
 }}
 
-  href="#threat-detection"
+  href="/threat-detection"
   style={{
     color: "#e2e8f0",
     background: "#1e293b",
@@ -410,7 +410,7 @@ onMouseLeave={(e) => {
   e.currentTarget.style.boxShadow = "none";
 }}
 
-  href="#security-alerts"
+href="/alerts"
   style={{
     color: "#e2e8f0",
     background: "#1e293b",
@@ -434,7 +434,7 @@ onMouseLeave={(e) => {
   e.currentTarget.style.boxShadow = "none";
 }}
 
-  href="#reports"
+  href="/reports"
   style={{
     color: "#e2e8f0",
     background: "#1e293b",
@@ -849,6 +849,7 @@ boxShadow: "0 0 20px rgba(139, 92, 246, 0.20)",
 
 
 <div id="threat-detection" style={{
+  display: "none",
   background: "linear-gradient(135deg, #132b46, #0a1527)",
   padding: "20px",
   borderRadius: "20px",
@@ -989,6 +990,8 @@ style={{
 </div>
 
       
+
+
 <h2 id="security-alerts" style={{ marginTop: "35px" }}>
         Recent Security Alerts
       </h2>
