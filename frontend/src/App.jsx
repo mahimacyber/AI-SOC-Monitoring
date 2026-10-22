@@ -190,9 +190,12 @@ async function updateAlertStatus(alertId, newStatus) {
       `http://127.0.0.1:8000/alerts/${alertId}/status`,
       {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        
+headers: {
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${sessionStorage.getItem("soc_access_token")}`
+},
+
         body: JSON.stringify({ status: newStatus })
       }
     );
@@ -222,10 +225,13 @@ async function analyzeThreat() {
     const response = await fetch(
       "http://127.0.0.1:8000/predict-and-save",
       {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+ 
+method: "POST",
+     headers: {
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${sessionStorage.getItem("soc_access_token")}`
+},
+
         body: JSON.stringify({
           failed_logins: Number(mlForm.failed_logins),
           successful_logins: Number(mlForm.successful_logins),
@@ -255,6 +261,7 @@ async function analyzeThreat() {
     }
 
   } catch (error) {
+    console.error("AI Threat Detection Error:", error);
     setMlResult({
       error: "Could not analyze threat. Check FastAPI."
     });

@@ -52,7 +52,7 @@ from fastapi import HTTPException
 class StatusUpdate(BaseModel):
     status: str
 
-@app.patch("/alerts/{alert_id}/status")
+@app.patch("/alerts/{alert_id}/status", dependencies=[Depends(get_current_user)])
 def update_alert_status(alert_id: int, update: StatusUpdate):
     allowed_statuses = ["New", "Investigating", "Resolved"]
 
@@ -115,7 +115,7 @@ class MLAlertRequest(LoginActivity):
     source_ip: str
 
 
-@app.post("/predict-and-save")
+@app.post("/predict-and-save", dependencies=[Depends(get_current_user)])
 def predict_and_save(activity: MLAlertRequest):
     from datetime import datetime, timezone
 
